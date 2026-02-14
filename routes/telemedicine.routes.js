@@ -592,6 +592,11 @@ router.get('/open-slots/:providerId', async (req, res) => {
 
   const minutes = Math.max(5, Math.min(180, parseInt(String(req.query.minutes ?? '20'), 10) || 20));
 
+  // Client timezone offset (minutes). Used to interpret weekly schedules
+  // as the user's local time. Render/Node commonly run in UTC.
+  const tzOffsetMinutes = Number.parseInt(String(req.query.tzOffsetMinutes ?? '0'), 10);
+  const tzOffsetMs = (Number.isFinite(tzOffsetMinutes) ? tzOffsetMinutes : 0) * 60 * 1000;
+
   const now = new Date();
   const from = safeDate(req.query.from) ?? now;
   // Default horizon: next 14 days.
@@ -647,9 +652,11 @@ router.get('/open-slots/:providerId', async (req, res) => {
   if (windows.length === 0) {
     const weekly = uiMap.weekly;
     if (weekly && typeof weekly === 'object') {
-      // Walk days between from..to
-      const startDay = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-      const endDay = new Date(to.getFullYear(), to.getMonth(), to.getDate());
+      // Walk days between from..to in *client local* time.
+      const fromLocal = new Date(from.getTime() + tzOffsetMs);
+      const toLocal = new Date(to.getTime() + tzOffsetMs);
+      const startDay = new Date(fromLocal.getFullYear(), fromLocal.getMonth(), fromLocal.getDate());
+      const endDay = new Date(toLocal.getFullYear(), toLocal.getMonth(), toLocal.getDate());
       for (let d = new Date(startDay); d.getTime() <= endDay.getTime(); d = new Date(d.getTime() + 24 * 60 * 60 * 1000)) {
         const cfg = weekly[dayKeyFor(d)];
         if (!cfg || typeof cfg !== 'object') continue;
@@ -668,8 +675,9 @@ router.get('/open-slots/:providerId', async (req, res) => {
         const st = parseHm(cfg.start);
         const en = parseHm(cfg.end);
         if (!st || !en) continue;
-        const wStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), st.h, st.m);
-        const wEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), en.h, en.m);
+        // Interpret times as client-local and convert back to UTC.
+        const wStart = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), st.h, st.m) - tzOffsetMs);
+        const wEnd = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), en.h, en.m) - tzOffsetMs);
         if (wEnd.getTime() <= wStart.getTime()) continue;
 
         const clampedStart = wStart.getTime() < from.getTime() ? from : wStart;
@@ -683,13 +691,31 @@ router.get('/open-slots/:providerId', async (req, res) => {
 
   // 3) Load booked intervals for provider (requested/upcoming/inProgress)
   const activeStatuses = ['requested', 'upcoming', 'scheduled', 'inProgress', 'in_progress', 'in-progress'];
+  // Fetch bookings that overlap the requested horizon, not just those
+  // whose start time falls within the window.
   const appts = await db.collection('telemedicine_appointments')
     .find({
       $or: [{ providerId }, { providerUid: providerId }],
       status: { $in: activeStatuses },
       $or: [
-        { scheduledAt: { $gte: from, $lt: to } },
-        { requestedStartAt: { $gte: from, $lt: to } },
+        // scheduled overlaps
+        {
+          scheduledAt: { $lt: to },
+          $or: [
+            { scheduledEndAt: { $gt: from } },
+            { scheduledEndAt: null },
+            { scheduledEndAt: { $exists: false } },
+          ],
+        },
+        // requested overlaps
+        {
+          requestedStartAt: { $lt: to },
+          $or: [
+            { requestedEndAt: { $gt: from } },
+            { requestedEndAt: null },
+            { requestedEndAt: { $exists: false } },
+          ],
+        },
       ],
     })
     .project({ scheduledAt: 1, scheduledEndAt: 1, requestedStartAt: 1, requestedEndAt: 1 })
