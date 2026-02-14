@@ -1,0 +1,28 @@
+{
+  "name": "homecare-pro-backend",
+  "version": "2.0.0",
+  "description": "Enhanced HomeCare Pro Backend API with improved patient data access",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "mongodb": "^6.5.0",
+    "firebase-admin": "^12.0.0",
+    "helmet": "^7.1.0",
+    "compression": "^1.7.4",
+    "express-rate-limit": "^7.1.5",
+    "agora-access-token": "^2.0.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.3"
+  }
+}
